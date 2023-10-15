@@ -9,5 +9,7 @@ data class Profile(
     val guap_id: String?,
     val guap_token: String?,
     val group_selected: Int?,
-    val isAdmin: Boolean
+    val isAdmin: Boolean,
+    val fio: String?,
+    val photo_telegram: String?
 )

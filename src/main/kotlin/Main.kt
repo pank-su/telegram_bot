@@ -3,6 +3,9 @@ import dev.inmo.tgbotapi.extensions.api.bot.getMe
 import dev.inmo.tgbotapi.extensions.api.chat.get.getChatMenuButton
 import dev.inmo.tgbotapi.extensions.api.chat.modify.setChatMenuButton
 import dev.inmo.tgbotapi.extensions.api.edit.edit
+import dev.inmo.tgbotapi.extensions.api.files.downloadFile
+import dev.inmo.tgbotapi.extensions.api.get.getFileAdditionalInfo
+import dev.inmo.tgbotapi.extensions.api.get.getUserProfilePhotos
 import dev.inmo.tgbotapi.extensions.api.send.reply
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.buildBehaviourWithLongPolling
@@ -21,18 +24,23 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.storage.Storage
+import io.github.jan.supabase.storage.storage
+import io.github.jan.supabase.storage.upload
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import model.Profile
 import model.ProfileID
+import java.io.File
 
 val client = createSupabaseClient(
     supabaseUrl = "https://fecnldjxpserceyiifwt.supabase.co",
     supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlY25sZGp4cHNlcmNleWlpZnd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODkwMjA5MjAsImV4cCI6MjAwNDU5NjkyMH0.yMRwZhIOlCo7EeTZ0lO5E_HJq-iV-ANZJFiNpwb3aeU"
 ) {
     install(Postgrest)
+    install(Storage)
 }
 
 
@@ -40,18 +48,6 @@ fun main() {
     val TOKEN = System.getenv("TELEGRAM_BOT_TOKEN")
 
     val bot = telegramBot(TOKEN)
-
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            client.postgrest.from("profiles").select(columns = Columns.list("telegram_id")) {
-                eq("telegram_id", "1")
-            }.decodeSingle<ProfileID>()
-
-        } catch (e: Exception) {
-            println(e)
-            client.postgrest.from("profiles").insert(ProfileID(telegram_id = "1"))
-        }
-    }
 
 
     val waitTutorial = mutableListOf<CommonUser>()
@@ -96,10 +92,11 @@ fun main() {
             }
 
 
+
+
             onCommand("start") {
 
-                setChatMenuButton(it.chat.id, menuButton = dev.inmo.tgbotapi.types.MenuButton.Commands)
-
+                // setChatMenuButton(it.chat.id, menuButton = dev.inmo.tgbotapi.types.MenuButton.Commands)
                 try {
                     client.postgrest.from("profiles").select(columns = Columns.list("telegram_id")) {
                         eq("telegram_id", it.chat.id.chatId.toString())
@@ -107,7 +104,32 @@ fun main() {
                     reply(it, "Добрый день, если вы хотите снова пройти обучение то напишите команду /tutorial")
                     return@onCommand
                 } catch (e: Exception) {
-                    client.postgrest.from("profiles").insert(ProfileID(telegram_id = it.chat.id.chatId.toString()))
+                    val pathed = getFileAdditionalInfo(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last())
+
+                    val outfile = File(pathed.filePath)
+                    runCatching {
+                        bot.downloadFile(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last(), outfile)
+                    }.onFailure {
+                        it.printStackTrace()
+                    }
+                    runCatching {
+                        client.storage.from("profile_images").upload(it.from!!.id.chatId.toString() + ".jpg", outfile)
+
+                        client.postgrest.from("profiles").insert(
+                            Profile(
+                                it.chat.id.chatId.toString(),
+                                null,
+                                null,
+                                null,
+                                false,
+                                (it.from!!.firstName + " " + it.from!!.lastName),
+                                "https://fecnldjxpserceyiifwt.supabase.co/storage/v1/object/public/profile_images/" + it.from!!.id.chatId.toString() + ".jpg"
+                            )
+                        )
+                    }.onFailure {
+                        it.printStackTrace()
+
+                    }
                 }
 
                 tutorial(it)
