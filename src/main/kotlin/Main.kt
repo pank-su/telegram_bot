@@ -21,6 +21,7 @@ import dev.inmo.tgbotapi.types.message.abstracts.ContentMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.utils.row
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.exceptions.UnknownRestException
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
@@ -96,6 +97,8 @@ fun main() {
 
             onCommand("start") {
 
+                println(it)
+
                 // setChatMenuButton(it.chat.id, menuButton = dev.inmo.tgbotapi.types.MenuButton.Commands)
                 try {
                     client.postgrest.from("profiles").select(columns = Columns.list("telegram_id")) {
@@ -104,28 +107,46 @@ fun main() {
                     reply(it, "Добрый день, если вы хотите снова пройти обучение то напишите команду /tutorial")
                     return@onCommand
                 } catch (e: Exception) {
-                    val pathed = getFileAdditionalInfo(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last())
-
-                    val outfile = File(pathed.filePath)
                     runCatching {
-                        bot.downloadFile(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last(), outfile)
-                    }.onFailure {
-                        it.printStackTrace()
-                    }
-                    runCatching {
-                        client.storage.from("profile_images").upload(it.from!!.id.chatId.toString() + ".jpg", outfile)
+                        try {
+                            val pathed =
+                                getFileAdditionalInfo(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last())
 
-                        client.postgrest.from("profiles").insert(
-                            Profile(
-                                it.chat.id.chatId.toString(),
-                                null,
-                                null,
-                                null,
-                                false,
-                                (it.from!!.firstName + " " + it.from!!.lastName),
-                                "https://fecnldjxpserceyiifwt.supabase.co/storage/v1/object/public/profile_images/" + it.from!!.id.chatId.toString() + ".jpg"
+                            val outfile = File(pathed.filePath)
+
+                            bot.downloadFile(getUserProfilePhotos(it.from!! as CommonUser).photos[0].last(), outfile)
+
+                            try {
+                                client.storage.from("profile_images")
+                                    .upload(it.from!!.id.chatId.toString() + ".jpg", outfile)
+                            } catch (e: UnknownRestException){
+
+                            }
+
+                            client.postgrest.from("profiles").insert(
+                                Profile(
+                                    it.chat.id.chatId.toString(),
+                                    null,
+                                    null,
+                                    null,
+                                    false,
+                                    (it.from!!.firstName + " " + it.from!!.lastName),
+                                    "https://fecnldjxpserceyiifwt.supabase.co/storage/v1/object/public/profile_images/" + it.from!!.id.chatId.toString() + ".jpg"
+                                )
                             )
-                        )
+                        } catch (e: IndexOutOfBoundsException) {
+                            client.postgrest.from("profiles").insert(
+                                Profile(
+                                    it.chat.id.chatId.toString(),
+                                    null,
+                                    null,
+                                    null,
+                                    false,
+                                    (it.from!!.firstName + " " + it.from!!.lastName),
+                                    "https://pro.guap.ru/images/no_image.jpg"
+                                )
+                            )
+                        }
                     }.onFailure {
                         it.printStackTrace()
 
@@ -194,29 +215,45 @@ fun main() {
                 }.decodeSingle<Profile>()
                 if (!profile.isAdmin) {
                     reply(it, "У вас нет прав для данной команды")
+                    return@onCommand
                 }
                 reply(it, "Отправьте сообщение, которое отправится всем студентам", replyMarkup = inlineKeyboard {
                     row {
                         dataButton("Отмена", "Cancel")
                     }
                 })
-
+                sendMessage.add(it.from as CommonUser)
             }
 
             onText {
-                val profiles = client.postgrest.from("profiles").select {
-                    eq("isAdmin", false)
-                }.decodeList<Profile>()
-                val p = it
+                runCatching {
+                    if (!sendMessage.contains(it.from)) {
 
-                profiles.forEach {
-                    send(
-                        IdChatIdentifier.Companion.invoke(it.telegram_id.toLong()),
-                        "Важное сообщение от ${p.from!!.firstName} ${p.from!!.lastName}:\n\n${p.content.text}"
-                    )
-                }
-                if (sendMessage.contains(it.from)) {
+                        // reply(it, "Возможно вы ошиблись командой, попробуйте ещё раз")
+                        return@onText
+                    }
+
+                    val profiles = client.postgrest.from("profiles").select {
+                        eq("isAdmin", false)
+                    }.decodeList<Profile>()
+                    val p = it
+
+                    profiles.forEach {
+                        try{
+                            send(
+                                IdChatIdentifier.Companion.invoke(it.telegram_id.toLong()),
+                                "Важное сообщение от ${p.from!!.firstName} ${p.from!!.lastName}:\n\n${p.content.text}"
+                            )
+                        } catch (e: Exception){
+
+                        }
+
+                    }
                     reply(it, "Сообщение отправлено ${profiles.size} студентам")
+
+                    sendMessage.remove(it.from)
+                }.onFailure {
+                    it.printStackTrace()
                 }
             }
 
@@ -265,7 +302,6 @@ fun main() {
                             "Возможно вы преподаватель?\n\n Введите команду /adminRequest, для того чтобы запросить права администратора. "
                         )
                     }
-
                 }
             }
             // Будующая фишка
